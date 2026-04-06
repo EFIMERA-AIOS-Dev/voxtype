@@ -118,6 +118,7 @@ class IPCHandlers {
     this.audioStorageManager = new AudioStorageManager();
     this._audioCleanupInterval = null;
     this._noteFilesEnabled = false;
+    this._targetWindowHwnd = null; // Focus tracking: hwnd captured before dictation
     this._setupTextEditMonitor();
     this._setupAudioCleanup();
     this._logDetectedGpus();
@@ -993,14 +994,70 @@ class IPCHandlers {
       }
     });
 
+    // Focus tracking: capture the foreground window before the overlay steals focus.
+    // Called from renderer (useAudioRecording.js) right before recording starts.
+    ipcMain.handle("capture-target-window", async () => {
+      if (process.platform !== "win32") {
+        this._targetWindowHwnd = null;
+        return { success: true };
+      }
+      try {
+        const { execSync } = require("child_process");
+        const focusHelperPath = require("path").join(
+          __dirname, "..", "..", "resources", "bin", "focus-helper.exe"
+        );
+        const fs = require("fs");
+        if (!fs.existsSync(focusHelperPath)) {
+          debugLogger.debug("[FocusTracking] focus-helper.exe not found, skipping");
+          this._targetWindowHwnd = null;
+          return { success: false, reason: "binary not found" };
+        }
+        const hwnd = execSync(`"${focusHelperPath}" get`, {
+          encoding: "utf8",
+          timeout: 3000,
+          windowsHide: true,
+        }).trim();
+        this._targetWindowHwnd = hwnd || null;
+        debugLogger.debug("[FocusTracking] Captured target window", { hwnd });
+        return { success: true, hwnd };
+      } catch (err) {
+        debugLogger.error("[FocusTracking] Failed to capture", { error: err.message });
+        this._targetWindowHwnd = null;
+        return { success: false };
+      }
+    });
+
     ipcMain.handle("paste-text", async (event, text, options) => {
-      // If the floating dictation panel currently has focus, dismiss it so the
-      // paste keystroke lands in the user's target app instead of the overlay.
       const mainWindow = this.windowManager?.mainWindow;
-      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()) {
+
+      // Focus tracking: if we have a captured target window, restore focus to it
+      // before pasting so the text lands in the correct window.
+      if (process.platform === "win32" && this._targetWindowHwnd) {
+        const hwnd = this._targetWindowHwnd;
+        this._targetWindowHwnd = null;
+        try {
+          const { execSync } = require("child_process");
+          const focusHelperPath = require("path").join(
+            __dirname, "..", "..", "resources", "bin", "focus-helper.exe"
+          );
+          execSync(`"${focusHelperPath}" set ${hwnd}`, {
+            encoding: "utf8",
+            timeout: 3000,
+            windowsHide: true,
+          });
+          debugLogger.debug("[FocusTracking] Restored focus to target window", { hwnd });
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        } catch (err) {
+          debugLogger.error("[FocusTracking] Failed to restore focus", { error: err.message });
+          // Fall back to original blur behavior
+          if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()) {
+            mainWindow.blur();
+            await new Promise((resolve) => setTimeout(resolve, 80));
+          }
+        }
+      } else if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()) {
+        // Original behavior: blur the overlay to let Windows activate the previous app
         if (process.platform === "darwin") {
-          // hide() forces macOS to activate the previous app; showInactive()
-          // restores the overlay without stealing focus.
           mainWindow.hide();
           await new Promise((resolve) => setTimeout(resolve, 120));
           mainWindow.showInactive();

@@ -35,6 +35,15 @@ export const useAudioRecording = (toast, options = {}) => {
         }
       }
 
+      // Focus tracking: capture the foreground window BEFORE recording starts.
+      // When the user clicks the floating button, the Electron overlay steals
+      // focus. By capturing the hwnd first, we can restore it when pasting.
+      try {
+        await window.electronAPI.captureTargetWindow?.();
+      } catch (_) {
+        // Non-critical — focus tracking is best-effort
+      }
+
       const didStart = audioManagerRef.current.shouldUseStreaming()
         ? await audioManagerRef.current.startStreamingRecording()
         : await audioManagerRef.current.startRecording();
