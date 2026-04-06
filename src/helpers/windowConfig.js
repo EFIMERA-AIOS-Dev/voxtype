@@ -52,7 +52,10 @@ const MAIN_WINDOW_CONFIG = {
   transparent: true,
   show: false,
   skipTaskbar: true,
-  focusable: true,
+  // On macOS, type:"panel" prevents focus stealing. On Windows, focusable:false
+  // achieves the same effect: the overlay receives clicks but doesn't steal
+  // focus from the user's target window (e.g. Notepad, Chrome).
+  focusable: process.platform === "darwin",
   visibleOnAllWorkspaces: process.platform !== "win32",
   fullScreenable: false,
   hasShadow: false,
