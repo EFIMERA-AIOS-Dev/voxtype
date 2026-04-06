@@ -388,9 +388,14 @@ export default function App() {
                 handleMouseUp(e);
                 setDragStartPos(null);
               }}
-              onClick={(e) => {
+              onClick={async (e) => {
                 if (!hasDragged) {
                   setIsCommandMenuOpen(false);
+                  // Focus tracking: capture foreground window before the click
+                  // steals focus to this overlay. Must happen BEFORE toggleListening.
+                  try {
+                    await window.electronAPI?.captureTargetWindow?.();
+                  } catch (_) {}
                   toggleListening();
                 }
                 e.preventDefault();
